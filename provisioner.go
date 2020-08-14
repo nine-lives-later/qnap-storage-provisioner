@@ -18,14 +18,14 @@ package main
 
 import (
 	"context"
-	"errors"
 	"flag"
+	"fmt"
 	"os"
-	"path"
+	"strings"
 	"syscall"
 
 	"sigs.k8s.io/sig-storage-lib-external-provisioner/v6/controller"
-
+	"github.com/nine-lives-later/go-qnap-filestation"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -34,56 +34,95 @@ import (
 )
 
 const (
-	provisionerName = "example.com/hostpath"
+	provisionerName = "qnap/filestation"
 )
 
-type hostPathProvisioner struct {
-	// The directory to create PV-backing directories in
-	pvDir string
-
-	// Identity of this hostPathProvisioner, set to node's name. Used to identify
-	// "this" provisioner's PVs.
-	identity string
+type qnapStorageProvisioner struct {
+	StorageURL         string
+	StorageNFSHostname string
+	StorageUser        string
+	StoragePassword    string
+	ShareName          string
 }
 
-// NewHostPathProvisioner creates a new hostpath provisioner
-func NewHostPathProvisioner() controller.Provisioner {
-	nodeName := os.Getenv("NODE_NAME")
-	if nodeName == "" {
-		klog.Fatal("env variable NODE_NAME must be set so that this provisioner can identify itself")
+// NewQnapStorageProvisioner creates a new hostpath provisioner
+func NewQnapStorageProvisioner() controller.Provisioner {
+	qnapURL := os.Getenv("QNAP_URL")
+	if qnapURL == "" {
+		klog.Fatal("Failed to retrieve qnap URL from environment variable QNAP_URL")
 	}
-	return &hostPathProvisioner{
-		pvDir:    "/tmp/hostpath-provisioner",
-		identity: nodeName,
+
+	qnapNFSHost := os.Getenv("QNAP_NFSHOST")
+	if qnapNFSHost == "" {
+		klog.Fatal("Failed to retrieve qnap NFS hostname from environment variable QNAP_NFSHOST")
+	}
+
+	qnapShare := os.Getenv("QNAP_SHARE")
+	if qnapShare == "" {
+		klog.Fatal("Failed to retrieve qnap share name from environment variable QNAP_SHARE")
+	}
+
+	qnapUser := os.Getenv("QNAP_USER")
+	if qnapUser == "" {
+		klog.Fatal("Failed to retrieve qnap username from environment variable QNAP_USER")
+	}
+
+	qnapPwd := os.Getenv("QNAP_PWD")
+	if qnapPwd == "" {
+		klog.Fatal("Failed to retrieve qnap user password from environment variable QNAP_PWD")
+	}
+
+	return &qnapStorageProvisioner{
+		StorageURL:         qnapURL,
+		StorageNFSHostname: qnapNFSHost,
+		ShareName:          qnapShare,
+		StorageUser:        qnapUser,
+		StoragePassword:    qnapPwd,
 	}
 }
-
-var _ controller.Provisioner = &hostPathProvisioner{}
 
 // Provision creates a storage asset and returns a PV object representing it.
-func (p *hostPathProvisioner) Provision(ctx context.Context, options controller.ProvisionOptions) (*v1.PersistentVolume, controller.ProvisioningState, error) {
-	path := path.Join(p.pvDir, options.PVName)
-
-	if err := os.MkdirAll(path, 0777); err != nil {
-		return nil, controller.ProvisioningFinished, err
+func (p *qnapStorageProvisioner) Provision(ctx context.Context, options controller.ProvisionOptions) (*v1.PersistentVolume, controller.ProvisioningState, error) {
+	// retrieve config
+	shareName := options.StorageClass.Parameters["shareName"]
+	if shareName == "" {
+		shareName = p.ShareName
 	}
 
+	// ensure folder does exist
+	folderPath := fmt.Sprintf("/%s/%s_%s_%s", shareName, options.PVC.Namespace, options.PVC.Name, options.PVName)
+
+	klog.Infof("Provisioning persistent volume '%v' on %v in %v", options.PVName, p.StorageNFSHostname, folderPath)
+
+	storage, err := filestation.Connect(p.StorageURL, p.StorageUser, p.StoragePassword, nil)
+	defer storage.Logout()
+
+	_, err = storage.EnsureFolder(folderPath)
+	if err != nil {
+		return nil, controller.ProvisioningNoChange, fmt.Errorf("Failed to ensure storage folder '%v': %v", folderPath, err)
+	}
+
+	// build volume information
 	pv := &v1.PersistentVolume{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: options.PVName,
 			Annotations: map[string]string{
-				"hostPathProvisionerIdentity": p.identity,
+				"storageName":  p.StorageNFSHostname,
+				"storageShare": shareName,
+				"storagePath":  folderPath,
 			},
 		},
 		Spec: v1.PersistentVolumeSpec{
 			PersistentVolumeReclaimPolicy: *options.StorageClass.ReclaimPolicy,
 			AccessModes:                   options.PVC.Spec.AccessModes,
 			Capacity: v1.ResourceList{
-				v1.ResourceName(v1.ResourceStorage): options.PVC.Spec.Resources.Requests[v1.ResourceName(v1.ResourceStorage)],
+				v1.ResourceStorage: options.PVC.Spec.Resources.Requests[v1.ResourceStorage],
 			},
 			PersistentVolumeSource: v1.PersistentVolumeSource{
-				HostPath: &v1.HostPathVolumeSource{
-					Path: path,
+				NFS: &v1.NFSVolumeSource{
+					Server:   p.StorageNFSHostname,
+					Path:     folderPath,
+					ReadOnly: false,
 				},
 			},
 		},
@@ -94,18 +133,27 @@ func (p *hostPathProvisioner) Provision(ctx context.Context, options controller.
 
 // Delete removes the storage asset that was created by Provision represented
 // by the given PV.
-func (p *hostPathProvisioner) Delete(ctx context.Context, volume *v1.PersistentVolume) error {
-	ann, ok := volume.Annotations["hostPathProvisionerIdentity"]
-	if !ok {
-		return errors.New("identity annotation not found on PV")
-	}
-	if ann != p.identity {
-		return &controller.IgnoredError{Reason: "identity annotation on PV does not match ours"}
+func (p *qnapStorageProvisioner) Delete(ctx context.Context, volume *v1.PersistentVolume) error {
+	// ensure the storage is the same
+	if storageName := volume.ObjectMeta.Annotations["storageName"]; !strings.EqualFold(storageName, p.StorageNFSHostname) {
+		return &controller.IgnoredError{Reason: "storage name mismatch"}
 	}
 
-	path := path.Join(p.pvDir, volume.Name)
-	if err := os.RemoveAll(path); err != nil {
-		return err
+	// get volume path
+	folderPath := volume.ObjectMeta.Annotations["storagePath"]
+	if folderPath == "" {
+		return &controller.IgnoredError{Reason:"missing storage path annotation (storagePath)"}
+	}
+
+	// delete folder from storage
+	klog.Infof("Deleting persistent volume '%v' on %v in %v", volume.Name, p.StorageNFSHostname, folderPath)
+
+	storage, err := filestation.Connect(p.StorageURL, p.StorageUser, p.StoragePassword, nil)
+	defer storage.Logout()
+
+	_, err = storage.DeleteFile(folderPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete storage folder '%v': %v", folderPath, err)
 	}
 
 	return nil
@@ -137,7 +185,7 @@ func main() {
 
 	// Create the provisioner: it implements the Provisioner interface expected by
 	// the controller
-	hostPathProvisioner := NewHostPathProvisioner()
+	hostPathProvisioner := NewQnapStorageProvisioner()
 
 	// Start the provision controller which will dynamically provision hostPath
 	// PVs
