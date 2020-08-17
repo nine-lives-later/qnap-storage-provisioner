@@ -1,0 +1,104 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: qnap-storage
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: qnap-storage-provisioner
+  namespace: qnap-storage
+---
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: qnap-storage-provisioner
+rules:
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "update", "patch"]
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: qnap-storage-provisioner
+subjects:
+  - kind: ServiceAccount
+    name: qnap-storage-provisioner
+    namespace: qnap-storage
+roleRef:
+  kind: ClusterRole
+  name: qnap-storage-provisioner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Role
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-qnap-storage-provisioner
+  namespace: qnap-storage
+rules:
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["endpoints"]
+    verbs: ["list", "watch", "create"]
+---
+kind: RoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: leader-locking-qnap-storage-provisioner
+  namespace: qnap-storage
+subjects:
+  - kind: ServiceAccount
+    name: qnap-storage-provisioner
+roleRef:
+  kind: Role
+  name: leader-locking-qnap-storage-provisioner
+  apiGroup: rbac.authorization.k8s.io
+---
+kind: Pod
+apiVersion: v1
+metadata:
+  name: qnap-storage-provisioner
+  namespace: qnap-storage
+spec:
+  containers:
+    - name: qnap-storage-provisioner
+      image: nineliveslater/qnap-storage-provisioner:master
+      imagePullPolicy: "IfNotPresent"
+      env:
+        - name: QNAP_URL
+          value: https://myqnap:8443
+        - name: QNAP_NFSHOST
+          value: myqnap-san
+        - name: QNAP_SHARE
+          value: DockerData1
+        - name: QNAP_USER
+          value: usdev-kubernetes
+        - name: QNAP_PWD
+          valueFrom:
+            secretKeyRef:
+              name: qnap-storage-provisioner
+              key: password
+  serviceAccountName: qnap-storage-provisioner
+---
+kind: StorageClass
+apiVersion: storage.k8s.io/v1
+metadata:
+  name: qnap-data
+provisioner: qnap/filestation
+parameters:
+  shareName: DockerData1
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate
