@@ -8,6 +8,7 @@ The storage provisioner will be deployed into a new `qnap-storage` namespace. (F
 
 Make sure to change the following properties:
 
+* Image tag for `nineliveslater/qnap-storage-provisioner:master` image by a specific version, e.g. `v1.0.0.k8s-1-18`
 * Value of `QNAP_*` environment variables (see below for details)
 * Change or remove `shareName` of the *StorageClass* resource
 * Create secret `qnap-storage-provisioner` with the following keys: `password`
