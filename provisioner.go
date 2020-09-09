@@ -45,6 +45,14 @@ type qnapStorageProvisioner struct {
 	ShareName          string
 }
 
+// ensure interface compatibility
+var (
+	_ controller.Provisioner = &qnapStorageProvisioner{}
+	_ controller.Qualifier = &qnapStorageProvisioner{}
+	_ controller.DeletionGuard = &qnapStorageProvisioner{}
+	_ controller.BlockProvisioner = &qnapStorageProvisioner{}
+)
+
 // NewQnapStorageProvisioner creates a new hostpath provisioner
 func NewQnapStorageProvisioner() controller.Provisioner {
 	qnapURL := os.Getenv("QNAP_URL")
@@ -193,4 +201,23 @@ func main() {
 
 	// Never stops.
 	pc.Run(context.Background())
+}
+
+// ShouldProvision returns whether provisioning for the claim should
+// be attempted.
+func (p *qnapStorageProvisioner) ShouldProvision(ctx context.Context, vpc *v1.PersistentVolumeClaim) bool {
+	// always provision the drive, there is no dependency
+	return true
+}
+
+// SupportsBlock returns whether provisioner supports block volume.
+func (p *qnapStorageProvisioner) SupportsBlock(ctx context.Context) bool {
+	// block volumes are not supported via NFS
+	return false
+}
+
+// ShouldDelete returns whether deleting the PV should be attempted.
+func (p *qnapStorageProvisioner) ShouldDelete(ctx context.Context, volume *v1.PersistentVolume) bool {
+	// there is no protection for directories, yet
+	return true
 }
