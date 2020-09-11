@@ -1,8 +1,8 @@
-# QNAP Storage Provisioner for QNAP storages
+# Kubernetes Storage Provisioner for QNAP storages
 
 ## Deployment
 
-To deploy the QNAP Storage Provisioner for QNAP storages, see the [example deployment configuration](kubernetes.yml).
+To deploy the Kubernetes Storage Provisioner for QNAP storages, see the [example deployment configuration](kubernetes.yml).
 
 The storage provisioner will be deployed into a new `qnap-storage` namespace. (For Rancher we recommend deploying to `System` project.)
 
