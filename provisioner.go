@@ -24,13 +24,13 @@ import (
 	"strings"
 	"syscall"
 
-	"sigs.k8s.io/sig-storage-lib-external-provisioner/v6/controller"
 	"github.com/nine-lives-later/go-qnap-filestation"
 	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog"
+	"sigs.k8s.io/sig-storage-lib-external-provisioner/v6/controller"
 )
 
 const (
@@ -47,9 +47,9 @@ type qnapStorageProvisioner struct {
 
 // ensure interface compatibility
 var (
-	_ controller.Provisioner = &qnapStorageProvisioner{}
-	_ controller.Qualifier = &qnapStorageProvisioner{}
-	_ controller.DeletionGuard = &qnapStorageProvisioner{}
+	_ controller.Provisioner      = &qnapStorageProvisioner{}
+	_ controller.Qualifier        = &qnapStorageProvisioner{}
+	_ controller.DeletionGuard    = &qnapStorageProvisioner{}
 	_ controller.BlockProvisioner = &qnapStorageProvisioner{}
 )
 
@@ -150,7 +150,7 @@ func (p *qnapStorageProvisioner) Delete(ctx context.Context, volume *v1.Persiste
 	// get volume path
 	folderPath := volume.ObjectMeta.Annotations["storagePath"]
 	if folderPath == "" {
-		return &controller.IgnoredError{Reason:"missing storage path annotation (storagePath)"}
+		return &controller.IgnoredError{Reason: "missing storage path annotation (storagePath)"}
 	}
 
 	// delete folder from storage
