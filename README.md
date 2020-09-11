@@ -56,11 +56,10 @@ The external storage provisioner provides the `qnap/filestation` *storage class*
 
 ## Authors
 
-The library is sponsored by the [marvin + konsorten GmbH](http://www.konsorten.de).
-
 We thank all the authors who provided code to this library:
 
 * Felix Kollmann
+* marvin + konsorten GmbH (who sponsored this library in 2018)
 
 ## License
 
