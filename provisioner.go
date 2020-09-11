@@ -43,6 +43,7 @@ type qnapStorageProvisioner struct {
 	StorageUser        string
 	StoragePassword    string
 	ShareName          string
+	MountOptions       []string
 }
 
 // ensure interface compatibility
@@ -80,12 +81,19 @@ func NewQnapStorageProvisioner() controller.Provisioner {
 		klog.Fatal("Failed to retrieve qnap user password from environment variable QNAP_PWD")
 	}
 
+	qnapMountOptionsStr := os.Getenv("QNAP_MOUNTOPTIONS")
+	var qnapMountOptions []string
+	if qnapMountOptionsStr != "" {
+		qnapMountOptions = strings.SplitN(qnapMountOptionsStr, ":", -1)
+	}
+
 	return &qnapStorageProvisioner{
 		StorageURL:         qnapURL,
 		StorageNFSHostname: qnapNFSHost,
 		ShareName:          qnapShare,
 		StorageUser:        qnapUser,
 		StoragePassword:    qnapPwd,
+		MountOptions:       qnapMountOptions,
 	}
 }
 
@@ -97,10 +105,21 @@ func (p *qnapStorageProvisioner) Provision(ctx context.Context, options controll
 		shareName = p.ShareName
 	}
 
+	// build mount options
+	var mountOptions []string = nil
+
+	if _, ok := options.StorageClass.Parameters["noDefaultMountOptions"]; !ok {
+		mountOptions = append(mountOptions, p.MountOptions...)
+	}
+
+	if len(options.StorageClass.MountOptions) > 0 {
+		mountOptions = append(mountOptions, options.StorageClass.MountOptions...)
+	}
+
 	// ensure folder does exist
 	folderPath := fmt.Sprintf("/%s/%s_%s_%s", shareName, options.PVC.Namespace, options.PVC.Name, options.PVName)
 
-	klog.Infof("Provisioning persistent volume '%v' on %v in %v", options.PVName, p.StorageNFSHostname, folderPath)
+	klog.Infof("Provisioning persistent volume '%v' on NFS host '%v' in folder '%v' with options %+v", options.PVName, p.StorageNFSHostname, folderPath, mountOptions)
 
 	storage, err := filestation.Connect(p.StorageURL, p.StorageUser, p.StoragePassword, nil)
 	defer storage.Logout()
@@ -126,6 +145,7 @@ func (p *qnapStorageProvisioner) Provision(ctx context.Context, options controll
 			Capacity: v1.ResourceList{
 				v1.ResourceStorage: options.PVC.Spec.Resources.Requests[v1.ResourceStorage],
 			},
+			MountOptions: mountOptions,
 			PersistentVolumeSource: v1.PersistentVolumeSource{
 				NFS: &v1.NFSVolumeSource{
 					Server:   p.StorageNFSHostname,
